@@ -1,135 +1,126 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <dlfcn.h>
 #include <time.h>
-#include <unistd.h>
-#include <getopt.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <sys/time.h>
+#include <sys/stat.h>
+#include <string.h>
 
-#define VERSION "0.1.0"
+static time_t target_start_sec = 0;
+static time_t real_start_sec = 0;
+static double speed_factor = 1.0;
+static int freeze_flag = 0;
+static int fake_mtime_flag = 0;
+static int debug_flag = 0;
+static int initialized = 0;
+static const char *tz_env = "UTC";
+static unsigned long long syscall_counter = 0;
 
-static volatile int running = 1;
+static void init_timerun(void) {
+    if (initialized) return;
+    initialized = 1;
 
-void handle_sigint(int sig) {
-    (void)sig;
-    running = 0;
-}
+    const char *env_target = getenv("TIMERUN_TARGET_SEC");
+    const char *env_speed = getenv("TIMERUN_SPEED");
+    const char *env_freeze = getenv("TIMERUN_FREEZE");
+    const char *env_mtime = getenv("TIMERUN_FAKE_MTIME");
+    const char *env_debug = getenv("TIMERUN_DEBUG");
+    const char *env_tz = getenv("TZ");
 
-static void print_usage(const char *prog_name) {
-    printf("TimeEye v%s <https://github.com/AndresDev859674/timerun>\n", VERSION);
-    printf("GNU General Public License Version 3 (GPLv3)\n\n");
-    printf("Usage:\n");
-    printf("  %s [options] <program> [args...]\n\n", prog_name);
-    printf("Options:\n");
-    printf("  -t, --trace-rate       Monitor time syscall frequency (calls/sec)\n");
-    printf("  -j, --detect-jumps     Detect abrupt clock jumps or REALTIME vs MONOTONIC drifts\n");
-    printf("  -i, --interval <sec>   Set sampling reporting interval in seconds (default: 1)\n");
-    printf("  -h, --help             Display this help menu and exit\n\n");
-    printf("Examples:\n");
-    printf("  %s -t -j -- timerun -s \"2028/01/01\" chromium\n", prog_name);
-    printf("  %s --trace-rate --interval 2 firefox\n", prog_name);
-}
+    if (env_tz) tz_env = env_tz;
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        print_usage(argv[0]);
-        return 0;
+    if (env_target) target_start_sec = (time_t)atoll(env_target);
+    if (env_speed) speed_factor = atof(env_speed);
+    if (env_freeze && strcmp(env_freeze, "1") == 0) freeze_flag = 1;
+    if (env_mtime && strcmp(env_mtime, "1") == 0) fake_mtime_flag = 1;
+    if (env_debug && strcmp(env_debug, "1") == 0) debug_flag = 1;
+
+    static time_t (*real_time)(time_t *) = NULL;
+    if (!real_time) real_time = dlsym(RTLD_NEXT, "time");
+    real_start_sec = real_time(NULL);
+
+    if (debug_flag) {
+        fprintf(stderr, "%s [DEBUG] : Injected successfully (Target: %ld, Speed: %.2f, Freeze: %d)\n",
+                tz_env, (long)target_start_sec, speed_factor, freeze_flag);
     }
+}
 
-    int trace_rate = 0;
-    int detect_jumps = 0;
-    int interval_sec = 1;
+static time_t calculate_fake_time(time_t current_real_sec) {
+    if (freeze_flag) {
+        return target_start_sec;
+    }
+    double elapsed_real = (double)(current_real_sec - real_start_sec);
+    return target_start_sec + (time_t)(elapsed_real * speed_factor);
+}
 
-    static struct option long_options[] = {
-        {"trace-rate",   no_argument,       0, 't'},
-        {"detect-jumps", no_argument,       0, 'j'},
-        {"interval",     required_argument, 0, 'i'},
-        {"help",         no_argument,       0, 'h'},
-        {0, 0, 0, 0}
-    };
+/* Intercept: clock_gettime */
+int clock_gettime(clockid_t clk_id, struct timespec *tp) {
+    init_timerun();
+    static int (*real_clock_gettime)(clockid_t, struct timespec *) = NULL;
+    if (!real_clock_gettime) real_clock_gettime = dlsym(RTLD_NEXT, "clock_gettime");
 
-    int opt;
-    while ((opt = getopt_long(argc, argv, "tji:h", long_options, NULL)) != -1) {
-        switch (opt) {
-            case 't': trace_rate = 1; break;
-            case 'j': detect_jumps = 1; break;
-            case 'i': interval_sec = atoi(optarg); break;
-            case 'h':
-                print_usage(argv[0]);
-                return 0;
-            default:
-                fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
-                return 1;
+    int ret = real_clock_gettime(clk_id, tp);
+    if (ret == 0 && (clk_id == CLOCK_REALTIME || clk_id == CLOCK_REALTIME_COARSE)) {
+        tp->tv_sec = calculate_fake_time(tp->tv_sec);
+        if (debug_flag) {
+            fprintf(stderr, "%s [DEBUG] : clock_gettime() -> Fake time: %ld\n", tz_env, (long)tp->tv_sec);
         }
     }
 
-    if (optind >= argc) {
-        fprintf(stderr, "UTC [ERROR] : No target program specified for TimeEye\n");
-        return 1;
-    }
+    __sync_fetch_and_add(&syscall_counter, 1);
+    return ret;
+}
 
-    signal(SIGINT, handle_sigint);
+/* Intercept: gettimeofday */
+int gettimeofday(struct timeval *tv, void *tz) {
+    init_timerun();
 
-    printf("TimeEye v%s\n", VERSION);
-    printf("Tracing Target: %s\n", argv[optind]);
-    if (trace_rate) printf(" -> Feature: Syscall Rate Tracking (%ds intervals)\n", interval_sec);
-    if (detect_jumps) printf(" -> Feature: Temporal Jump & Drift Detection\n");
-    printf("====================================================\n\n");
-    fflush(stdout);
+    static int (*real_gettimeofday)(struct timeval *, void *) = NULL;
+    if (!real_gettimeofday) real_gettimeofday = dlsym(RTLD_NEXT, "gettimeofday");
 
-    pid_t pid = fork();
-    if (pid == 0) {
-        /* Process Child */
-        execvp(argv[optind], &argv[optind]);
-        perror("UTC [ERROR] : Failed to execute target program");
-        exit(1);
-    } else if (pid > 0) {
-        /* Monitor Parent */
-        struct timespec ts_last_real, ts_last_mono;
-        clock_gettime(CLOCK_REALTIME, &ts_last_real);
-        clock_gettime(CLOCK_MONOTONIC, &ts_last_mono);
-
-        int status;
-        while (running) {
-            pid_t res = waitpid(pid, &status, WNOHANG);
-            if (res == pid) {
-                printf("\n====================================================\n");
-                printf("TimeEye: Target process exited cleanly.\n");
-                break;
-            }
-
-            sleep(interval_sec);
-
-            if (detect_jumps) {
-                struct timespec ts_curr_real, ts_curr_mono;
-                clock_gettime(CLOCK_REALTIME, &ts_curr_real);
-                clock_gettime(CLOCK_MONOTONIC, &ts_curr_mono);
-
-                long real_delta = ts_curr_real.tv_sec - ts_last_real.tv_sec;
-                long mono_delta = ts_curr_mono.tv_sec - ts_last_mono.tv_sec;
-
-                /* Detect discrepancy between REALTIME and MONOTONIC */
-                if (labs(real_delta - mono_delta) > 2) {
-                    fprintf(stderr, "UTC [WARNING] : Temporal Jump Detected! (REALTIME Delta: %lds, MONOTONIC Delta: %lds)\n",
-                            real_delta, mono_delta);
-                }
-
-                ts_last_real = ts_curr_real;
-                ts_last_mono = ts_curr_mono;
-            }
-
-            if (trace_rate) {
-                printf("UTC [INFO] : Active process PID [%d] monitoring clock cycles...\n", pid);
-            }
+    int ret = real_gettimeofday(tv, tz);
+    if (ret == 0) {
+        tv->tv_sec = calculate_fake_time(tv->tv_sec);
+        if (debug_flag) {
+            fprintf(stderr, "%s [DEBUG] : gettimeofday() -> Fake time: %ld\n", tz_env, (long)tv->tv_sec);
         }
-    } else {
-        perror("UTC [ERROR] : Fork failed");
-        return 1;
     }
+    return ret;
 
-    return 0;
+    __sync_fetch_and_add(&syscall_counter, 1);
+}
+
+/* Intercept: time */
+time_t time(time_t *tloc) {
+    init_timerun();
+    static time_t (*real_time)(time_t *) = NULL;
+    if (!real_time) real_time = dlsym(RTLD_NEXT, "time");
+
+    time_t real_now = real_time(NULL);
+    time_t fake_now = calculate_fake_time(real_now);
+
+    if (tloc) *tloc = fake_now;
+    if (debug_flag) {
+        fprintf(stderr, "%s [DEBUG] : time() -> Fake time: %ld\n", tz_env, (long)fake_now);
+    }
+    return fake_now;
+
+    __sync_fetch_and_add(&syscall_counter, 1);
+}
+
+/* Intercept: stat / fstat / lstat for fake mtime */
+int stat(const char *pathname, struct stat *statbuf) {
+    init_timerun();
+    static int (*real_stat)(const char *, struct stat *) = NULL;
+    if (!real_stat) real_stat = dlsym(RTLD_NEXT, "stat");
+
+    int ret = real_stat(pathname, statbuf);
+    if (ret == 0 && fake_mtime_flag) {
+        time_t fake_now = calculate_fake_time(time(NULL));
+        statbuf->st_mtime = fake_now;
+        statbuf->st_atime = fake_now;
+        statbuf->st_ctime = fake_now;
+    }
+    return ret;
 }
