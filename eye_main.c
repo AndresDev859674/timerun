@@ -20,7 +20,7 @@ void handle_sigint(int sig) {
 }
 
 static void print_usage(const char *prog_name) {
-    printf("TimeEye v%s - Temporal Diagnostics & Syscall Analyzer\n", VERSION);
+    printf("TimeEye v%s <https://github.com/AndresDev859674/timerun>\n", VERSION);
     printf("GNU General Public License Version 3 (GPLv3)\n\n");
     printf("Usage:\n");
     printf("  %s [options] <program> [args...]\n\n", prog_name);
