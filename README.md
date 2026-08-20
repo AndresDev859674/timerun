@@ -7,10 +7,6 @@
   <img src="https://theoldnet.com/images/anibar.gif">
 </p>
 
-> [!NOTE]
-> This README may not the best
->
-
 # About
 What its this? It's a program written in C that runs applications on a specific date without breaking the system by changing the system time. It communicates with the kernel. For example, if you want to program something that requires a specific date to change things (for events like Christmas, December 24th), you use TimeRun and can test if everything you programmed works (when it's activated on that date).
 
