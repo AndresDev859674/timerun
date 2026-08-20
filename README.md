@@ -67,3 +67,8 @@ git clone https://github.com/AndresDev859674/timerun.git
 cd timerun
 make
 sudo make install
+```
+If you are in arch linux (i also use arch btw) You can use yay
+```bash
+yay -S timerun-git
+```
