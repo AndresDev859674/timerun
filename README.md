@@ -32,7 +32,36 @@ TimeRun its not the Only, Also TimeEye exists and its a division of TimeRun for 
 - **Timezone Spoofing:** Override timezone settings per application.
 - **File MTime Spoofing:** Spoof file timestamps in `stat()` calls.
 
+## So HOW this works?
+
+TimeRun intercepts temporal system calls in user space using dynamic library injection before execution reaches the C library or the Linux kernel.
+```
++-------------------------------------------------------------+
+|                      Target Process                         |
+|            (e.g., Firefox, AppImage, custom binary)         |
++-------------------------------------------------------------+
+                               |
+                               v (time(), clock_gettime, stat)
++-------------------------------------------------------------+
+|                    libtimerun_inject.so                     |
+|           [Interception Layer via LD_PRELOAD]               |
+| Calculates: T_fake = T_start + (T_real - T_real_start) * x  |
++-------------------------------------------------------------+
+                               |
+                               v (dlsym RTLD_NEXT)
++-------------------------------------------------------------+
+|                         GNU C Library                       |
+|                          (glibc)                            |
++-------------------------------------------------------------+
+                               |
+                               v
++-------------------------------------------------------------+
+|                        Linux Kernel                         |
++-------------------------------------------------------------+
+```
+
 ## Installation
+The installation its very simple, Just clone, and compile it and install it
 ```bash
 git clone https://github.com/AndresDev859674/timerun.git
 cd timerun
