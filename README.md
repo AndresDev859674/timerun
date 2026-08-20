@@ -29,14 +29,12 @@ TimeRun its not the Only, Also TimeEye exists and its a division of TimeRun for 
 
 ### Most Common Features 
 
-- 🕒 **Absolute Time Control:** Force any application to run on a specific date/time.
-- ⏩ **Relative Time Offsets:** Easily advance (`+2d 5h`) or rewind (`-1m`) time context.
-- ⚡ **Time Acceleration:** Speed up or slow down time progression (`-x 2.0`).
-- 🧊 **Time Freezing:** Freeze time permanently at a specific timestamp.
-- 🌐 **Timezone Spoofing:** Override timezone settings per application.
-- 📁 **File MTime Spoofing:** Spoof file timestamps in `stat()` calls.
-
-`if you hate emojis, make a issue in the issues tab `
+- **Absolute Time Control:** Force any application to run on a specific date/time.
+- **Relative Time Offsets:** Easily advance (`+2d 5h`) or rewind (`-1m`) time context.
+- **Time Acceleration:** Speed up or slow down time progression (`-x 2.0`).
+- **Time Freezing:** Freeze time permanently at a specific timestamp.
+- **Timezone Spoofing:** Override timezone settings per application.
+- **File MTime Spoofing:** Spoof file timestamps in `stat()` calls.
 
 ## Installation
 ```bash
