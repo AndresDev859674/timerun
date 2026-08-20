@@ -20,7 +20,7 @@ void handle_sigint(int sig) {
 }
 
 static void print_usage(const char *prog_name) {
-    printf("TimeEye v%s <https://github.com/AndresDev859674/timerun>\n", VERSION);
+    printf("TimeEye v%s - Temporal Diagnostics & Syscall Analyzer\n", VERSION);
     printf("GNU General Public License Version 3 (GPLv3)\n\n");
     printf("Usage:\n");
     printf("  %s [options] <program> [args...]\n\n", prog_name);
@@ -30,7 +30,7 @@ static void print_usage(const char *prog_name) {
     printf("  -i, --interval <sec>   Set sampling reporting interval in seconds (default: 1)\n");
     printf("  -h, --help             Display this help menu and exit\n\n");
     printf("Examples:\n");
-    printf("  %s -t -j ./timerun -s \"2028/01/01\" date\n", prog_name);
+    printf("  %s -t -j -- timerun -s \"2028/01/01\" chromium\n", prog_name);
     printf("  %s --trace-rate --interval 2 firefox\n", prog_name);
 }
 
