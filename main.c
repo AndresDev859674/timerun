@@ -7,8 +7,10 @@
 #include <getopt.h>
 #include <libgen.h>
 #include <ctype.h>
+#include <stdbool.h>
+#include <dirent.h>
 
-#define VERSION "1.0.0"
+#define VERSION "1.1.0"
 
 static const char *DEFAULT_FORMATS[] = {
     "%Y/%m/%d %H:%M:%S",
@@ -38,23 +40,60 @@ static void print_usage(const char *prog_name) {
     printf("  %s -s \"<date_time>\" [options] <program> [args...]\n", prog_name);
     printf("  %s -a \"<offset>\" [options] <program> [args...]\n\n", prog_name);
     printf("Options:\n");
-    printf("  -s, --specify <date>     Specify target date/time (e.g. \"2027/12/25 00:00\" or \"25/12/2027\")\n");
-    printf("  -a, --advance <offset>   Advance target time relatively (e.g. \"+2d 5h\", \"+30m\")\n");
-    printf("  -r, --rewind <offset>    Rewind target time relatively (e.g. \"-1y\", \"-3h\")\n");
-    printf("  -x, --speed <factor>     Set time speed multiplier (e.g. 2.0 = 2x speed, 0.5 = half speed)\n");
-    printf("  -F, --freeze             Freeze the target time permanently (clock does not advance)\n");
-    printf("  -f, --format <format>    Custom strftime format string for date parsing\n");
-    printf("  -z, --tz <timezone>      Set custom timezone context (e.g. UTC, EST, America/New_York)\n");
-    printf("  -m, --fake-mtime         Spoof file modification times in stat() calls\n");
-    printf("  -d, --debug              Enable internal debug log output to stderr\n");
-    printf("  -v, --version            Display version info and exit\n");
-    printf("  -h, --help               Display this help screen and exit\n\n");
+    printf("  -s, --specify <date>        Specify target date/time (e.g. \"2027/12/25 00:00\" or \"25/12/2027\")\n");
+    printf("  -a, --advance <offset>      Advance target time relatively (e.g. \"+2d 5h\", \"+30m\")\n");
+    printf("  -r, --rewind <offset>       Rewind target time relatively (e.g. \"-1y\", \"-3h\")\n");
+    printf("  -x, --speed <factor>        Set time speed multiplier (e.g. 2.0 = 2x speed, 0.5 = half speed)\n");
+    printf("  -F, --freeze                Freeze the target time permanently (clock does not advance)\n");
+    printf("  -f, --format <format>       Custom strftime format string for date parsing\n");
+    printf("  -z, --tz <timezone>         Set custom timezone context (e.g. UTC, EST, America/New_York)\n");
+    printf("  -m, --fake-mtime            Spoof file modification times in stat() calls\n");
+    printf("  -k, --allow-running         Bypass active process check and force execution\n");
+    printf("  -d, --debug                 Enable internal debug log output to stderr\n");
+    printf("  -v, --version               Display version info and exit\n");
+    printf("  -h, --help                  Display this help screen and exit\n\n");
     printf("Examples:\n");
     printf("  %s -s \"25/12/2027 00:00\" date\n", prog_name);
     printf("  %s -a \"+5d\" -x 2.0 firefox\n", prog_name);
     printf("  %s -s \"2030/01/01\" -F -z \"UTC\" /path/to/app.AppImage\n\n", prog_name);
     printf("Written by swiftink (Andres)\n");
     printf("if you find a bug you can Report bugs or submit issues to the project repository.\n");
+}
+
+static bool is_process_running(const char *proc_name) {
+    DIR *dir = opendir("/proc");
+    if (!dir) return false;
+
+    struct dirent *ent;
+    pid_t my_pid = getpid();
+
+    while ((ent = readdir(dir)) != NULL) {
+        if (!isdigit(ent->d_name[0])) continue;
+
+        pid_t pid = (pid_t)atoi(ent->d_name);
+        if (pid == my_pid) continue;
+
+        char comm_path[256];
+        snprintf(comm_path, sizeof(comm_path), "/proc/%d/comm", pid);
+
+        FILE *fp = fopen(comm_path, "r");
+        if (fp) {
+            char comm[256];
+            if (fgets(comm, sizeof(comm), fp)) {
+                size_t len = strlen(comm);
+                if (len > 0 && comm[len - 1] == '\n') comm[len - 1] = '\0';
+                if (strcmp(comm, proc_name) == 0) {
+                    fclose(fp);
+                    closedir(dir);
+                    return true;
+                }
+            }
+            fclose(fp);
+        }
+    }
+
+    closedir(dir);
+    return false;
 }
 
 static time_t parse_relative_time(const char *str) {
@@ -130,7 +169,6 @@ static char *get_lib_path(void) {
 }
 
 int main(int argc, char *argv[]) {
-    /* If run without any arguments, show help directly */
     if (argc < 2) {
         print_usage(argv[0]);
         return 0;
@@ -143,25 +181,27 @@ int main(int argc, char *argv[]) {
     double speed_factor = 1.0;
     int freeze = 0;
     int fake_mtime = 0;
+    int allow_running = 0;
     int debug = 0;
 
     static struct option long_options[] = {
-        {"specify",    required_argument, 0, 's'},
-        {"format",     required_argument, 0, 'f'},
-        {"tz",         required_argument, 0, 'z'},
-        {"advance",    required_argument, 0, 'a'},
-        {"rewind",     required_argument, 0, 'r'},
-        {"speed",      required_argument, 0, 'x'},
-        {"freeze",     no_argument,       0, 'F'},
-        {"fake-mtime", no_argument,       0, 'm'},
-        {"debug",      no_argument,       0, 'd'},
-        {"version",    no_argument,       0, 'v'},
-        {"help",       no_argument,       0, 'h'},
+        {"specify",       required_argument, 0, 's'},
+        {"format",        required_argument, 0, 'f'},
+        {"tz",            required_argument, 0, 'z'},
+        {"advance",       required_argument, 0, 'a'},
+        {"rewind",        required_argument, 0, 'r'},
+        {"speed",         required_argument, 0, 'x'},
+        {"freeze",        no_argument,       0, 'F'},
+        {"fake-mtime",    no_argument,       0, 'm'},
+        {"allow-running", no_argument,       0, 'k'},
+        {"debug",         no_argument,       0, 'd'},
+        {"version",       no_argument,       0, 'v'},
+        {"help",          no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "s:f:z:a:r:x:Fmdvh", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:f:z:a:r:x:Fmkdvh", long_options, NULL)) != -1) {
         switch (opt) {
             case 's': time_str = optarg; break;
             case 'f': custom_format = optarg; break;
@@ -171,6 +211,7 @@ int main(int argc, char *argv[]) {
             case 'x': speed_factor = atof(optarg); break;
             case 'F': freeze = 1; break;
             case 'm': fake_mtime = 1; break;
+            case 'k': allow_running = 1; break;
             case 'd': debug = 1; break;
             case 'v':
                 print_version();
@@ -195,6 +236,18 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
         return 1;
     }
+
+    char *target_cmd = strdup(argv[optind]);
+    char *target_name = basename(target_cmd);
+
+    if (!allow_running && is_process_running(target_name)) {
+        print_log(timezone, "WARN", "Target process is already running in the background");
+        fprintf(stderr, "%s [WARN] : Single-instance apps (e.g. browsers) will ignore LD_PRELOAD.\n", (timezone && strlen(timezone) > 0) ? timezone : "UTC");
+        fprintf(stderr, "%s [WARN] : Close all running instances of '%s' or use -k/--allow-running to bypass.\n", (timezone && strlen(timezone) > 0) ? timezone : "UTC", target_name);
+        free(target_cmd);
+        return 1;
+    }
+    free(target_cmd);
 
     if (timezone) {
         setenv("TZ", timezone, 1);
